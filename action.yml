@@ -37,10 +37,7 @@ runs:
       shell: bash
       run: |
         if [ -z "${ENVO_TOKEN:-}" ] || [ -z "${ENVO_KEY:-}" ]; then
-          echo "::error::ENVO_TOKEN and ENVO_KEY must be provided via the job's env (from repository secrets)."
-          echo "  env:"
-          echo "    ENVO_TOKEN: \${{ secrets.ENVO_TOKEN }}"
-          echo "    ENVO_KEY: \${{ secrets.ENVO_KEY }}"
+          echo "::error::ENVO_TOKEN and ENVO_KEY must be provided via the job's env. Add them under the step's env block, sourced from repository secrets named ENVO_TOKEN and ENVO_KEY."
           exit 1
         fi
         export PATH="$RUNNER_TEMP/envo-bin:$PATH"
