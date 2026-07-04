@@ -1,0 +1,75 @@
+name: "Setup Envo"
+description: "Give CI jobs and coding agents their working environment: secrets, skills, and provider auth in one step."
+author: "envo.sh"
+branding:
+  icon: "package"
+  color: "yellow"
+
+inputs:
+  ref:
+    description: "Environment ref to materialize: <project>/<environment>"
+    required: true
+  dir:
+    description: "Directory to materialize into"
+    required: false
+    default: "."
+  harness:
+    description: "Harness override for skill placement (claude-code, codex, opencode, cursor, ...)"
+    required: false
+  export-env:
+    description: "Export materialized env vars to GITHUB_ENV for later steps (values are masked in logs)"
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install envo
+      shell: bash
+      run: |
+        if ! command -v envo >/dev/null 2>&1; then
+          export ENVO_INSTALL_DIR="$RUNNER_TEMP/envo-bin"
+          curl -fsSL https://envo.sh/install | sh
+          echo "$ENVO_INSTALL_DIR" >> "$GITHUB_PATH"
+        fi
+
+    - name: Materialize environment
+      shell: bash
+      run: |
+        if [ -z "${ENVO_TOKEN:-}" ] || [ -z "${ENVO_KEY:-}" ]; then
+          echo "::error::ENVO_TOKEN and ENVO_KEY must be provided via the job's env (from repository secrets)."
+          echo "  env:"
+          echo "    ENVO_TOKEN: \${{ secrets.ENVO_TOKEN }}"
+          echo "    ENVO_KEY: \${{ secrets.ENVO_KEY }}"
+          exit 1
+        fi
+        export PATH="$RUNNER_TEMP/envo-bin:$PATH"
+        ARGS=(up "${{ inputs.ref }}" --dir "${{ inputs.dir }}")
+        if [ -n "${{ inputs.harness }}" ]; then ARGS+=(--harness "${{ inputs.harness }}"); fi
+        envo "${ARGS[@]}"
+
+    - name: Export env vars to later steps
+      if: ${{ inputs.export-env == 'true' }}
+      shell: bash
+      run: |
+        ENV_FILE=$(ls "${{ inputs.dir }}"/.env.d/*.local 2>/dev/null | head -1)
+        if [ -z "$ENV_FILE" ]; then
+          echo "::warning::no materialized env file found under ${{ inputs.dir }}/.env.d"
+          exit 0
+        fi
+        COUNT=0
+        while IFS= read -r line; do
+          case "$line" in
+            ''|'#'*) continue ;;
+          esac
+          KEY="${line%%=*}"
+          VALUE="${line#*=}"
+          # strip JSON-style quoting envo applies to values with special chars
+          case "$VALUE" in
+            '"'*'"') VALUE="$(printf '%s' "$VALUE" | sed -e 's/^"//' -e 's/"$//')" ;;
+          esac
+          echo "::add-mask::$VALUE"
+          printf '%s=%s\n' "$KEY" "$VALUE" >> "$GITHUB_ENV"
+          COUNT=$((COUNT+1))
+        done < "$ENV_FILE"
+        echo "exported $COUNT env var(s) to subsequent steps (values masked)"
